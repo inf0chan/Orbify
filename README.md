@@ -86,10 +86,4 @@ vercel
 
 The included `vercel.json` routes all requests to `server.js` as a serverless function — no extra configuration needed.
 
-## 📜 License
-
-MIT
-
----
-
-Made with 🎵 by creating things that look good and sound good.
+Made by Himanshu Bisht
