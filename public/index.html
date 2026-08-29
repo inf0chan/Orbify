@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Orbify — Music Visualizer</title>
-  <meta name="description" content="Orbify — Spotify-style music player with NCS particle orb that reacts to every beat." />
+  <meta name="description" content="Orbify — Spotify-style music player with a 3D spinning vinyl record that reacts to every beat." />
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -15,6 +15,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
   <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/vinyl.css" />
 </head>
 <body>
 
@@ -62,8 +63,8 @@
   <!-- ── Main Canvas Area (orb lives here) ─────────────────────── -->
   <main class="main-area" id="main-area">
 
-    <!-- The orb canvas – fills entire main area -->
-    <canvas id="orb-canvas"></canvas>
+    <!-- The vinyl canvas – fills entire main area -->
+    <canvas id="vinyl-canvas"></canvas>
 
     <!-- Floating search bar (top center) -->
     <div class="float-search" id="float-search">
@@ -190,7 +191,9 @@
 </footer>
 
 <!-- Hidden audio element -->
-<audio id="audio-el" crossorigin="anonymous" preload="none"></audio>
+<!-- preload="auto" so the browser starts buffering as soon as src is set —
+     this dramatically cuts the gap when switching/starting tracks. -->
+<audio id="audio-el" crossorigin="anonymous" preload="auto"></audio>
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
@@ -198,7 +201,7 @@
 <!-- Scripts -->
 <script src="/js/api.js"></script>
 <script src="/js/player.js"></script>
-<script src="/js/orb.js"></script>
+<script src="/js/vinyl.js"></script>
 <script src="/js/ui.js"></script>
 <script src="/js/app.js"></script>
 

@@ -27,7 +27,18 @@ const OrbifyPlayer = (() => {
     onTimeUpdate: null,
     onError: null,
     onLoaded: null,
+    onLoading: null,   // fired when a new track starts buffering
   };
+
+  // ─── State ────────────────────────────────────────────────────
+  // Bump this token every time we start loading a track. Any async work or a
+  // trailing audio event from a previous source is stale and must NOT touch the
+  // audio element or callbacks once a newer track has been selected.
+  let loadToken = 0;
+  let activeLoadToken = 0; // token of the source currently wired into <audio>
+  let isLoading = false;
+  let isPlayingOptimistic = false; // true between optimistic onPlay and real 'playing'
+  let errorToken = -1; // last load token for which we already reported onError
 
   // ─── Init AudioContext ─────────────────────────────────────────
   function initAudioContext() {
@@ -50,11 +61,24 @@ const OrbifyPlayer = (() => {
   }
 
   // ─── Load & Play Track ────────────────────────────────────────
-  function loadTrack(track) {
+  async function loadTrack(track) {
+    const token = ++loadToken; // invalidate any in-flight load
+    isLoading = true;
+    callbacks.onLoading?.(track);
+
+    const url = OrbifyAPI.getAudioUrl(track);
+    if (!url) {
+      if (token !== loadToken) return false;
+      fireError('This track is no longer available');
+      return false;
+    }
+
     currentTrack = track;
-    audioEl.src = OrbifyAPI.getAudioUrl(track);
+    activeLoadToken = token; // guard: only events for THIS loaded source count
+    audioEl.src = url;
     audioEl.volume = isMuted ? 0 : volume;
     audioEl.load();
+    return true;
   }
 
   async function play(track) {
@@ -65,22 +89,32 @@ const OrbifyPlayer = (() => {
     }
 
     if (track && track.id !== currentTrack?.id) {
-      loadTrack(track);
+      const ok = await loadTrack(track);
+      // A newer track may have been selected while we resolved — bail quietly.
+      if (track.id !== currentTrack?.id || !ok) return;
     }
 
     try {
-      await audioEl.play();
-      isPlaying = true;
-      callbacks.onPlay?.(currentTrack);
+      // Optimistically mark as playing (new track) right away. audioEl.play()
+      // resolves only after real buffering starts, so we set the play button
+      // state immediately and refine it when the 'playing' event fires.
+      if (track && !isPlaying) {
+        isPlaying = true;
+        isPlayingOptimistic = true;
+        callbacks.onPlay?.(currentTrack);
+      }
+      const p = audioEl.play();
+      if (p !== undefined) await p;
     } catch (err) {
       console.error('[Player] Play error:', err);
-      callbacks.onError?.(err.message);
+      fireError('Failed to load audio preview');
     }
   }
 
   function pause() {
     audioEl.pause();
     isPlaying = false;
+    isPlayingOptimistic = false;
     callbacks.onPause?.();
   }
 
@@ -159,6 +193,23 @@ const OrbifyPlayer = (() => {
   }
 
   // ─── Audio Element Events ─────────────────────────────────────
+  // The <audio> element is shared for every track. When we switch to a new song,
+  // the old source can still emit a trailing ended/error/waiting event that must
+  // NOT trigger skipping or toasts for the new track. We guard every event with
+  // the active load token; stale events (from a source we already replaced) are
+  // ignored.
+  function isCurrentLoad() { return loadToken === activeLoadToken; }
+
+  // Report an error once per loaded track — an <audio> error can surface both as
+  // a DOM 'error' event AND as a rejected play() promise, and double-reporting
+  // would trigger the app's skip logic twice (once as manual, once as auto).
+  function fireError(msg) {
+    if (errorToken === activeLoadToken) return;
+    errorToken = activeLoadToken;
+    isLoading = false;
+    callbacks.onError?.(msg);
+  }
+
   audioEl.addEventListener('timeupdate', () => {
     const current = audioEl.currentTime;
     const total   = audioEl.duration && !isNaN(audioEl.duration) ? audioEl.duration : (currentTrack?.duration || 30);
@@ -167,22 +218,51 @@ const OrbifyPlayer = (() => {
   });
 
   audioEl.addEventListener('ended', () => {
+    if (!isCurrentLoad()) return; // superseded by a newer track
     isPlaying = false;
     callbacks.onEnd?.(currentTrack);
   });
 
+  // Buffering finished and real audio is about to start → clear loading state.
   audioEl.addEventListener('canplay', () => {
+    if (!isCurrentLoad()) return;
+    if (isLoading) {
+      isLoading = false;
+      callbacks.onLoaded?.(currentTrack);
+    }
+  });
+
+  // Actual playback began → make sure playing state + UI are accurate.
+  audioEl.addEventListener('playing', () => {
+    if (!isCurrentLoad()) return;
+    isLoading = false;
     callbacks.onLoaded?.(currentTrack);
+    // Only fire onPlay if we didn't already go optimistic (avoids double toasts
+    // when switching tracks); still fires for a plain resume of the same track.
+    if (!isPlayingOptimistic) {
+      isPlaying = true;
+      callbacks.onPlay?.(currentTrack);
+    }
+    isPlayingOptimistic = false;
+  });
+
+  audioEl.addEventListener('waiting', () => {
+    if (!isCurrentLoad() || !isPlaying) return;
+    // Buffering for more data (stall) — surface it so the UI can show a spinner.
+    isLoading = true;
+    callbacks.onLoading?.(currentTrack);
   });
 
   audioEl.addEventListener('error', (e) => {
+    if (!isCurrentLoad()) return; // stale error from a source we've replaced
     console.error('[Player] Audio error:', e);
-    callbacks.onError?.('Failed to load audio preview');
+    fireError('Failed to load audio preview');
   });
 
   // ─── Getters ──────────────────────────────────────────────────
   function getCurrentTrack()  { return currentTrack; }
   function getIsPlaying()     { return isPlaying; }
+  function getIsLoading()     { return isLoading; }
   function getVolume()        { return volume; }
   function getIsMuted()       { return isMuted; }
   function getIsRepeat()      { return isRepeat; }
@@ -203,6 +283,7 @@ const OrbifyPlayer = (() => {
     getAudioMetrics,
     getCurrentTrack,
     getIsPlaying,
+    getIsLoading,
     getVolume,
     getIsMuted,
     getIsRepeat,

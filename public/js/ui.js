@@ -95,14 +95,14 @@ const OrbifyUI = (() => {
   }
 
   // ─── Render Track Rows ────────────────────────────────────────
-  function renderResults(tracks, query, source = 'youtube') {
+  function renderResults(tracks, query, source = 'itunes') {
     els.drawerLoading.classList.remove('vis');
     els.drawerEmpty.style.display = 'none';
     els.resultsList.innerHTML = '';
 
-    // Show source badge (e.g. YouTube or iTunes)
+    // Show source badge
     if (tracks && tracks.length > 0) {
-      els.sourceBadge.textContent = source === 'youtube' ? 'Sourced from YouTube' : 'Sourced from iTunes Previews';
+      els.sourceBadge.textContent = 'iTunes — 30s previews';
       els.sourceBadge.style.display = 'block';
     } else {
       els.sourceBadge.style.display = 'none';
@@ -112,6 +112,10 @@ const OrbifyUI = (() => {
       els.drawerEmpty.style.display = 'block';
       els.drawerTitle.textContent = `No results`;
       els.drawerCount.textContent = '';
+      const hint = els.drawerEmpty.querySelector('small');
+      if (hint) hint.textContent =
+        'Exact song titles (esp. Bollywood/film songs) are often copyrighted.\n' +
+        'Try a genre or vibe instead — e.g. "india", "punjabi", "hindi", "bollywood".';
       return;
     }
 
@@ -223,6 +227,12 @@ const OrbifyUI = (() => {
   function setPlayState(playing) {
     els.iconPlay.style.display  = playing ? 'none'  : 'block';
     els.iconPause.style.display = playing ? 'block' : 'none';
+  }
+
+  // While a track buffers, show a spinner in place of the play button so the
+  // UI feels responsive the instant you click a new song.
+  function setLoadingState(loading) {
+    els.btnPlayPause.classList.toggle('loading', !!loading);
   }
 
   function initWaveform() {
@@ -366,6 +376,7 @@ const OrbifyUI = (() => {
     setPlayingCard,
     updatePlayerTrack,
     setPlayState,
+    setLoadingState,
     updateProgress,
     updateVolume,
     setMuteState,

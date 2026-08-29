@@ -7,7 +7,7 @@ const OrbifyAPI = (() => {
   const BASE_URL = '/api';
 
   /**
-   * Search for tracks via backend proxy (YouTube or iTunes fallback)
+    * Search for tracks via the backend (iTunes).
    * @param {string} query - Search term
    * @param {number} limit - Max results
    * @returns {Promise<Array>} - Array of normalized track objects
@@ -33,11 +33,11 @@ const OrbifyAPI = (() => {
    * @returns {string} - URL to use as the src of the audio element
    */
   function getAudioUrl(track) {
-    if (track.streamType === 'youtube') {
-      return `${BASE_URL}/stream/${track.id}`;
-    }
-    // iTunes fallback
-    return `${BASE_URL}/preview?url=${encodeURIComponent(track.previewUrl)}`;
+    // iTunes previews are piped through the server proxy so the Web Audio
+    // analyser (CORS) works.
+    return track && track.previewUrl
+      ? `${BASE_URL}/preview?url=${encodeURIComponent(track.previewUrl)}`
+      : '';
   }
 
   return { searchTracks, getAudioUrl };

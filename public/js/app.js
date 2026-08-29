@@ -1,6 +1,6 @@
 /**
  * app.js — Orbify Application Bootstrap
- * Wires OrbifyAPI, OrbifyPlayer, OrbVisualizer, and OrbifyUI together.
+ * Wires OrbifyAPI, OrbifyPlayer, VinylVisualizer, and OrbifyUI together.
  */
 
 (function () {
@@ -10,6 +10,11 @@
   let searchDebounce = null;
   let currentResults = [];
   let currentTrackIdx = -1;
+  let failStreak = 0;
+  // True when the user explicitly chose this track (click/prev/next). When a
+  // manually picked song fails to load we STOP instead of silently jumping to a
+  // different random song — that random-skip behaviour was confusing.
+  let manualSelection = false;
 
   // ─── Elements ─────────────────────────────────────────────────
   const searchInput  = document.getElementById('search-input');
@@ -35,10 +40,7 @@
       .then(result => {
         const tracks = result.tracks || [];
         currentResults = tracks;
-        OrbifyUI.renderResults(tracks, query, result.source || tracks[0]?.streamType || 'youtube');
-        if (result.fallback) {
-          OrbifyUI.showToast('⚠️ YouTube search failed — showing 30s previews', 6000);
-        }
+        OrbifyUI.renderResults(tracks, query, result.source || tracks[0]?.streamType || 'itunes');
         attachRowListeners();
       })
       .catch(err => {
@@ -112,7 +114,7 @@
     const likedTracks = recent.filter(t => likedIds.includes(String(t.id)));
 
     currentResults = likedTracks;
-    OrbifyUI.renderResults(likedTracks, 'Liked Songs', likedTracks[0]?.streamType || 'youtube');
+    OrbifyUI.renderResults(likedTracks, 'Liked Songs', likedTracks[0]?.streamType || 'itunes');
     attachRowListeners();
   });
 
@@ -121,14 +123,18 @@
     document.querySelectorAll('.track-row').forEach((row, idx) => {
       row.addEventListener('click', () => {
         const track = currentResults[idx];
-        if (track) playTrack(track, idx);
+        if (track) playTrack(track, idx, true);
       });
     });
   }
 
   // ─── Play Track ───────────────────────────────────────────────
-  async function playTrack(track, idx) {
+  // isManual = true when the user explicitly chose this track (click, prev,
+  // next). A manually chosen track that fails should STOP (show a toast), never
+  // silently jump to a different random song.
+  async function playTrack(track, idx, isManual = false) {
     currentTrackIdx = idx;
+    manualSelection = !!isManual;
 
     OrbifyUI.updatePlayerTrack(track);
     OrbifyUI.setPlayingCard(track.id);
@@ -138,8 +144,22 @@
     } catch (err) {
       console.error('[App] Playback error:', err);
       OrbifyUI.showToast('Could not load stream — trying next track');
-      skipNext();
+      safeSkipNext();
     }
+  }
+
+  // Skip to the next track, but stop if too many tracks fail in a row so we
+  // don't loop forever on a list of dead links.
+  function safeSkipNext() {
+    if (currentResults.length === 0) return;
+    failStreak++;
+    if (failStreak >= currentResults.length) {
+      failStreak = 0;
+      OrbifyUI.showToast('Could not find a playable track 😕');
+      OrbifyUI.setPlayState(false);
+      return;
+    }
+    skipNext();
   }
 
   // ─── Player Controls ──────────────────────────────────────────
@@ -157,15 +177,15 @@
   document.getElementById('btn-prev').addEventListener('click', () => {
     if (currentResults.length === 0) return;
     const prevIdx = (currentTrackIdx - 1 + currentResults.length) % currentResults.length;
-    playTrack(currentResults[prevIdx], prevIdx);
+    playTrack(currentResults[prevIdx], prevIdx, true);
   });
 
   // Next
   document.getElementById('btn-next').addEventListener('click', () => {
-    skipNext();
+    skipNext(true);
   });
 
-  function skipNext() {
+  function skipNext(isManual = false) {
     if (currentResults.length === 0) return;
     let nextIdx;
     if (OrbifyPlayer.getIsShuffle()) {
@@ -173,7 +193,7 @@
     } else {
       nextIdx = (currentTrackIdx + 1) % currentResults.length;
     }
-    playTrack(currentResults[nextIdx], nextIdx);
+    playTrack(currentResults[nextIdx], nextIdx, isManual);
   }
 
   // Shuffle
@@ -255,12 +275,19 @@
   document.addEventListener('mouseup', () => { isDraggingVolume = false; });
 
   // ─── Player Event Callbacks ───────────────────────────────────
+  OrbifyPlayer.on('onLoading', () => {
+    OrbifyUI.setLoadingState(true);
+  });
+
   OrbifyPlayer.on('onPlay', track => {
+    failStreak = 0; // a track actually started → clear the failure streak
+    OrbifyUI.setLoadingState(false);
     OrbifyUI.setPlayState(true);
     OrbifyUI.showToast(`▶ Playing: ${track.title}`);
   });
 
   OrbifyPlayer.on('onPause', () => {
+    OrbifyUI.setLoadingState(false);
     OrbifyUI.setPlayState(false);
   });
 
@@ -271,7 +298,9 @@
   });
 
   OrbifyPlayer.on('onEnd', track => {
+    OrbifyUI.setLoadingState(false);
     OrbifyUI.setPlayState(false);
+    failStreak = 0;
     if (OrbifyPlayer.getIsRepeat()) {
       OrbifyPlayer.play(track);
     } else {
@@ -280,8 +309,19 @@
   });
 
   OrbifyPlayer.on('onError', msg => {
+    OrbifyUI.setLoadingState(false);
     OrbifyUI.showToast(`⚠️ ${msg}`);
     OrbifyUI.setPlayState(false);
+    // If the user explicitly picked this track, don't silently jump to a random
+    // different song — that's confusing. Only auto-skip dead links when we were
+    // already auto-playing (ended → next). 
+    if (manualSelection) {
+      manualSelection = false;
+      return;
+    }
+    // Archive items occasionally have dead/restricted files — auto-skip to the
+    // next playable track instead of stopping on a broken one.
+    safeSkipNext();
   });
 
   OrbifyPlayer.on('onLoaded', track => {
@@ -292,7 +332,7 @@
   OrbifyUI.renderRecentList(track => {
     // When recent track is clicked, make it the single currentResults or search results
     currentResults = [track];
-    playTrack(track, 0);
+    playTrack(track, 0, true);
   });
 
   // ─── Keyboard Shortcuts ───────────────────────────────────────
@@ -312,7 +352,7 @@
         if (OrbifyPlayer.getCurrentTrack()) OrbifyPlayer.togglePlayPause();
         break;
       case 'ArrowRight':
-        skipNext();
+        skipNext(true);
         break;
       case 'ArrowLeft':
         document.getElementById('btn-prev').click();
